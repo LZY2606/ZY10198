@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>火山形变解译台</title>
+  <style>
+    :root { color-scheme: light; --ink:#17212b; --muted:#637181; --line:#d9e1ea; --panel:#fff; --soft:#f4f7fb; --accent:#b6422a; --good:#177245; --warn:#b54708; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:#eef2f7; }
+    header { padding:28px 34px 18px; background:linear-gradient(120deg,#251b18,#713225); color:white; }
+    h1 { margin:0 0 8px; font-size:30px; }
+    header p { margin:0; color:#f1d8d0; }
+    main { display:grid; grid-template-columns:330px 1fr; gap:18px; padding:20px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 8px 22px rgba(23,33,43,.06); }
+    label { display:block; font-size:13px; font-weight:650; margin:12px 0 6px; }
+    select, input, button { width:100%; padding:9px 10px; border:1px solid #b9c5d1; border-radius:8px; font:inherit; background:white; }
+    button { margin-top:14px; cursor:pointer; background:var(--accent); color:white; border-color:var(--accent); font-weight:700; }
+    button.secondary { background:#334155; border-color:#334155; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    h2 { margin:0 0 12px; font-size:19px; }
+    h3 { margin:18px 0 8px; font-size:15px; }
+    .muted { color:var(--muted); font-size:13px; line-height:1.5; }
+    .pill { display:inline-block; padding:4px 9px; border-radius:999px; background:#e8eef6; font-size:12px; font-weight:700; margin:0 6px 6px 0; }
+    .pill.active { background:#fef3c7; color:#92400e; }
+    table { border-collapse:collapse; width:100%; font-size:12px; margin-top:8px; }
+    th,td { border-bottom:1px solid var(--line); padding:7px 6px; text-align:right; white-space:nowrap; }
+    th:first-child,td:first-child { text-align:left; }
+    th { color:#475569; background:var(--soft); position:sticky; top:0; }
+    .scroll { max-height:330px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .tabs button { width:auto; margin:0; background:#e2e8f0; color:#17212b; border-color:#cbd5e1; }
+    .tabs button.active { background:#17212b; color:white; }
+    .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+    .metric { background:var(--soft); padding:12px; border-radius:10px; }
+    .metric b { display:block; font-size:20px; margin-top:4px; }
+    canvas { width:100%; height:290px; border:1px solid var(--line); border-radius:10px; background:#fbfdff; }
+    .two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#0f172a; color:#dbeafe; padding:12px; border-radius:10px; font-size:12px; max-height:400px; overflow:auto; }
+    @media (max-width: 980px) { main,.two { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>火山形变解译台</h1>
+  <p>GNSS 三分量与 InSAR LOS 联合反演：点源、岩墙/受限平面源候选并列展示，保留坐标系、时段、协方差和预测血缘。</p>
+</header>
+<main>
+  <section class="card">
+    <h2>反演控制</h2>
+    <label>模型类型</label>
+    <select id="modelType"><option value="POINT">点源 Mogi</option><option value="DIKE">岩墙 / 受限平面源</option></select>
+        <input id="regularization" type="number" value="0.02" min="0" step="0.005">
+    <div class="grid2">
+      <div><label>深度下界 km</label><input id="minDepth" type="number" value="0.2" step="0.1"></div>
+      <div><label>深度上界 km</label><input id="maxDepth" type="number" value="8" step="0.1"></div>
+      <div><label>尺寸下界 km</label><input id="minSize" type="number" value="0.15" step="0.05"></div>
+      <div><label>尺寸上界 km</label><input id="maxSize" type="number" value="6" step="0.1"></div>
+    </div>
+    <label>多起点数量</label><input id="starts" type="number" value="12" min="3" max="40">
+    <button id="fit">运行反演</button>
+    <button id="both" class="secondary">并行生成点源与岩墙</button>
+    <button id="reimport" class="secondary">清空并重新导入 fixture</button>
+    <p class="muted">深度始终为“向下为正”；高程为 ENU 的 Up。CME 以组协方差表达，不复制观测。</p>
+  </section>
+  <section class="card">
+    <div class="tabs">
+      <button data-tab="summary" class="active">候选摘要</button>
+      <button data-tab="field">预测场/残差</button>
+      <button data-tab="compare">候选差分</button>
+      <button data-tab="covariance">协方差口径</button>
+      <button data-tab="trace">预测血缘</button>
+    </div>
+    <div id="summary" class="tab"></div>
+    <div id="field" class="tab" hidden><canvas id="map"></canvas><div id="predictions"></div></div>
+    <div id="compare" class="tab" hidden><div id="comparison" class="muted">生成两个候选后自动按观测类型与区域差分。</div></div>
+    <div id="covariance" class="tab" hidden><div id="cov"></div></div>
+    <div id="trace" class="tab" hidden><pre id="traceJson"></pre></div>
+  </section>
+</main>
+<script>
+const state = { runs: [], latest: null, predictions: [] };
+const $ = id => document.getElementById(id);
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const text = await response.text();
+  if (!response.ok) throw new Error(text);
+  return JSON.parse(text);
+}
+function requestBody(type) {
+  return { modelType:type, regularization:Number($('regularization').value), starts:Number($('starts').value),
+    bounds:{ minDepthKm:Number($('minDepth').value), maxDepthKm:Number($('maxDepth').value),
+      minSizeKm:Number($('minSize').value), maxSizeKm:Number($('maxSize').value) }};
+}
+async function fit(type) {
+  const result = await api('/api/fit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(requestBody(type))});
+  state.latest = result;
+  state.predictions = await api(`/api/runs/${result.runId}/predictions`);
+  state.runs = await api('/api/runs');
+  render();
+  await compareIfReady();
+}
+function metricRows(map) { return Object.entries(map).map(([k,v]) => `<tr><td>${k}</td><td>${v.count}</td><td>${v.weightedRms.toFixed(3)}</td><td>${(v.meanResidualM*1000).toFixed(1)}</td><td>${(v.maxAbsResidualM*1000).toFixed(1)}</td></tr>`).join(''); }
+function render() {
+  const r = state.latest;
+  if (!r) { $('summary').innerHTML = '<p class="muted">请选择模型并运行反演。</p>'; return; }
+  const params = Object.entries(r.parameters).map(([k,v]) => `<span class="pill">${k}: ${Number(v).toFixed(3)}</span>`).join('');
+  const bounds = r.activeBoundaries.map(b => `<span class="pill active">边界活跃：${b.parameter} ${b.bound} (${b.value.toFixed(3)} / ${b.limit.toFixed(3)})</span>`).join('') || '<span class="pill">未触及物理边界</span>';
+  $('summary').innerHTML = `<h2>${r.modelType} 候选 #${r.runId} ${r.boundaryActive ? '<b style="color:var(--warn)">（边界活跃，不是内部稳定解）</b>' : ''}</h2>${bounds}<h3>参数分布（多起点最优）</h3><div>${params}</div>
+  <div class="metrics"><div class="metric">目标函数<b>${r.objective.toFixed(3)}</b></div><div class="metric">数据加权 RMS<b>${r.dataWeightedRms.toFixed(3)}</b></div><div class="metric">正则代价<b>${r.regularizationCost.toFixed(3)}</b></div><div class="metric">有效信号数<b>${r.effectiveObservations.toFixed(1)}/${r.rawObservations}</b></div></div>
+  <h3>按观测类型</h3><table><thead><tr><th>类型</th><th>数量</th><th>加权RMS</th><th>均值mm</th><th>最大mm</th></tr></thead><tbody>${metricRows(r.metricsByObservationType)}</tbody></table>
+  <h3>按区域</h3><table><thead><tr><th>区域</th><th>数量</th><th>加权RMS</th><th>均值mm</th><th>最大mm</th></tr></thead><tbody>${metricRows(r.metricsByRegion)}</tbody></table>
+  <h3>多起点终值</h3><div class="scroll"><table><thead><tr>${Object.keys(r.starts[0] || {}).map(k=>`<th>${k}</th>`).join('')}</tr></thead><tbody>${r.starts.map(s=>`<tr>${Object.values(s).map(v=>`<td>${Number(v).toFixed(3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+  <p class="muted">运行列表：${state.runs.map(x => `<a href="/api/runs/${x.id}/export">#${x.id} ${x.modelType}${x.boundaryActive?' 边界':''}</a>`).join(' · ')}</p>`;
+  $('traceJson').textContent = JSON.stringify({response:r, datasetCrs:r.crs}, null, 2);
+  renderCov(r); renderPredictions(); draw();
+}
+function renderCov(r) { $('cov').innerHTML = `<table><thead><tr><th>组</th><th>类型</th><th>时段</th><th>原始行</th><th>有效信号</th><th>CME σ mm</th><th>模型</th></tr></thead><tbody>${r.covarianceSummary.map(g=>`<tr><td>${g.group}</td><td>${g.observationType}</td><td>${g.periodId}</td><td>${g.rawRows}</td><td>${g.effectiveIndependentSignals.toFixed(2)}</td><td>${(g.commonModeSigmaM*1000).toFixed(2)}</td><td>${g.model}</td></tr>`).join('')}</tbody></table>`; }
+function renderPredictions() { $('predictions').innerHTML = `<h3>空间残差（逐条可追溯）</h3><div class="scroll"><table><thead><tr><th>站点</th><th>类型</th><th>分量</th><th>时段</th><th>观测mm</th><th>预测mm</th><th>残差mm</th><th>LOS norm</th><th>几何版本</th></tr></thead><tbody>${state.predictions.map(p=>`<tr><td>${p.stationId}</td><td>${p.observationType}</td><td>${p.component}</td><td>${p.periodId}</td><td>${(p.observedM*1000).toFixed(2)}</td><td>${(p.predictedM*1000).toFixed(2)}</td><td>${(p.residualM*1000).toFixed(2)}</td><td>${p.losNorm ? p.losNorm.toFixed(7) : '-'}</td><td>${p.geometryVersion}</td></tr>`).join('')}</tbody></table></div>`; }
+function draw() {
+  const canvas = $('map'); const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * devicePixelRatio; canvas.height = 290 * devicePixelRatio;
+  const ctx = canvas.getContext('2d'); ctx.scale(devicePixelRatio, devicePixelRatio);
+  const w = rect.width, h = 290, pad=34;
+  const sx = x => pad + ((x + 8.5) / 17) * (w - 2*pad);
+  const sy = y => h - pad - ((y + 8.5) / 17) * (h - 2*pad);
+  ctx.clearRect(0,0,w,h); ctx.strokeStyle='#cbd5e1'; ctx.fillStyle='#64748b'; ctx.font='12px sans-serif';
+  for (let v=-8; v<=8; v+=4) { ctx.beginPath(); ctx.moveTo(sx(v),pad); ctx.lineTo(sx(v),h-pad); ctx.stroke(); ctx.fillText(v+' km', sx(v)-10, h-8); }
+  for (let v=-8; v<=8; v+=4) { ctx.beginPath(); ctx.moveTo(pad,sy(v)); ctx.lineTo(w-pad,sy(v)); ctx.stroke(); ctx.fillText(v+' km', 2, sy(v)+4); }
+  const by = {}; state.predictions.forEach(p => (by[p.stationId] ||= []).push(p));
+  Object.entries(by).forEach(([id, rows]) => {
+    const r = rows.find(x=>x.component==='U') || rows[0];
+    const x = sx(stationX[id] ?? 0), y = sy(stationY[id] ?? 0);
+    const magnitude = Math.min(10, 3 + Math.abs(r.residualM)*900);
+    ctx.fillStyle = r.residualM >= 0 ? 'rgba(182,66,42,.75)' : 'rgba(30,64,175,.75)';
+    ctx.beginPath(); ctx.arc(x,y,magnitude,0,Math.PI*2); ctx.fill();
+  });
+  const p = state.latest.parameters;
+  ctx.strokeStyle='#111827'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(sx(p.xKm||0),sy(p.yKm||0),12,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#111827'; ctx.fillText(state.latest.modelType, sx(p.xKm||0)+14, sy(p.yKm||0)-10);
+}
+const stationX = Object.fromEntries([]); const stationY = Object.fromEntries([]);
+async function hydrateStations() {
+  const dataset = await api('/api/dataset');
+  dataset.stations.forEach(s => { stationX[s.id]=s.xKm; stationY[s.id]=s.yKm; });
+}
+async function compareIfReady() {
+  if (state.runs.length < 2) return;
+  const point = [...state.runs].reverse().find(x=>x.modelType==='POINT');
+  const dike = [...state.runs].reverse().find(x=>x.modelType==='DIKE');
+  if (!point || !dike) return;
+  const data = await api(`/api/compare?a=${point.id}&b=${dike.id}`);
+  const rows = map => Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td>${v.count}</td><td>${(v.meanPredictionDifferenceM*1000).toFixed(2)}</td><td>${(v.rmsPredictionDifferenceM*1000).toFixed(2)}</td><td>${v.weightedRmsA.toFixed(3)}</td><td>${v.weightedRmsB.toFixed(3)}</td></tr>`).join('');
+  $('comparison').innerHTML = `<h2>点源 #${point.id} vs 岩墙 #${dike.id}</h2><p class="muted">两者并列，不输出综合胜利者；点源边界：${point.boundaryActive?'活跃':'内部'}，岩墙边界：${dike.boundaryActive?'活跃':'内部'}。</p>
+  <h3>按观测类型</h3><table><thead><tr><th>类型</th><th>数量</th><th>均值差mm</th><th>RMS差mm</th><th>点源WRMS</th><th>岩墙WRMS</th></tr></thead><tbody>${rows(data.differencesByObservationType)}</tbody></table>
+  <h3>按区域</h3><table><thead><tr><th>区域</th><th>数量</th><th>均值差mm</th><th>RMS差mm</th><th>点源WRMS</th><th>岩墙WRMS</th></tr></thead><tbody>${rows(data.differencesByRegion)}</tbody></table>`;
+}
+document.querySelectorAll('.tabs button').forEach(button => button.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active')); button.classList.add('active');
+  document.querySelectorAll('.tab').forEach(tab => tab.hidden = tab.id !== button.dataset.tab);
+  if (button.dataset.tab === 'field') draw();
+});
+$('fit').onclick = () => fit($('modelType').value).catch(e => alert(e.message));
+$('both').onclick = async () => { await fit('DIKE'); await fit('POINT'); };
+$('reimport').onclick = async () => { await api('/api/admin/reimport',{method:'POST'}); state={runs:[],latest:null,predictions:[]}; render(); };
+hydrateStations();
+api('/api/runs').then(runs => { state.runs = runs; });
+</script>
+</body>
+</html>
