@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>火山形变解译台</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --panel2:#1e2738; --line:#2b3650;
+    --txt:#e6ecf7; --muted:#8d9bb5; --ac:#ff8f5c; --ac2:#5cc8ff; --ok:#57d18a; --warn:#ffcf6e; --bad:#ff6b7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    background:var(--bg); color:var(--txt); font-size:13px; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:1px; }
+  header .sub { color:var(--muted); font-size:12px; }
+  .wrap { display:grid; grid-template-columns:330px 1fr; gap:14px; padding:14px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .panel h2 { font-size:13px; margin:0 0 10px; color:var(--ac2); letter-spacing:.5px; }
+  label { display:block; margin:7px 0 3px; color:var(--muted); font-size:12px; }
+  select,input[type=text],input[type=number],textarea { width:100%; background:var(--panel2);
+    border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:7px 9px; font-size:12px; }
+  textarea { min-height:110px; font-family:ui-monospace,Menlo,monospace; }
+  button { background:var(--ac); color:#1a1208; border:0; border-radius:6px; padding:8px 13px;
+    font-weight:600; cursor:pointer; margin:4px 6px 0 0; font-size:12px; }
+  button.sec { background:var(--panel2); color:var(--txt); border:1px solid var(--line); }
+  button:hover { filter:brightness(1.12); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .muted { color:var(--muted); }
+  .tag { display:inline-block; padding:1px 7px; border-radius:20px; background:var(--panel2);
+    border:1px solid var(--line); font-size:11px; margin:2px 4px 2px 0; color:var(--muted); }
+  .tag.ok { color:var(--ok); border-color:#27503a; }
+  .tag.warn { color:var(--warn); border-color:#5a4a22; }
+  .tag.bad { color:var(--bad); border-color:#5a2a30; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th,td { border-bottom:1px solid var(--line); padding:6px 7px; text-align:right; }
+  th:first-child,td:first-child, td.l,th.l { text-align:left; }
+  th { color:var(--muted); font-weight:500; }
+  tr.best td { background:#1c2a22; }
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .badge-active { color:var(--bad); font-weight:700; }
+  .badge-inner { color:var(--ok); }
+  svg { background:#0c111c; border-radius:8px; border:1px solid var(--line); }
+  .small { font-size:11px; }
+  pre.meta { white-space:pre-wrap; background:var(--panel2); padding:8px; border-radius:6px; font-size:11px; color:var(--muted); max-height:220px; overflow:auto; }
+  .rangeval { float:right; color:var(--ac); }
+  .toast { position:fixed; bottom:20px; right:20px; background:var(--panel2); border:1px solid var(--ac2);
+    border-radius:8px; padding:10px 14px; display:none; max-width:420px; z-index:9; }
+  .clickable { cursor:pointer; }
+  .clickable:hover td { background:#24314a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>火山形变解译台</h1>
+  <span class="sub">Mogi 点源 · Okada 岩墙 · 受限平面源 ｜ ENU 坐标系 · 深度向下为正 · LOS 单位向量校验</span>
+  <span style="flex:1"></span>
+  <span id="convTags" class="small muted"></span>
+</header>
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <h2>① 数据导入</h2>
+      <div>
+        <button onclick="loadFixture()">导入固定 fixture</button>
+        <button class="sec" onclick="wipe()">清空数据库</button>
+      </div>
+      <label>或粘贴观测 CSV（含 CRS / LOS / 协方差分组 / 时段）</label>
+      <textarea id="csv" placeholder="# dataset: ...&#10;# crs: EPSG:...&#10;# groups&#10;..."></textarea>
+      <button class="sec" onclick="importCsv()">导入 CSV</button>
+      <div id="dsList" style="margin-top:10px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>② 模型 · 物理边界 · 正则</h2>
+      <label>模型类型</label>
+      <select id="modelType">
+        <option value="MOGI">点源（Mogi）</option>
+        <option value="DIKE">岩墙（Okada 张性断裂）</option>
+        <option value="PLANE">受限平面源（Mogi 子源网格）</option>
+      </select>
+      <label>正则强度 λ <span class="rangeval" id="lambdaVal">0</span></label>
+      <input type="range" id="lambda" min="0" max="100" value="0" oninput="lambdaVal.textContent=this.value">
+      <div class="row">
+        <div><label>深度上界 (km)</label><input type="number" id="bDepthMax" value="6" step="0.1"></div>
+        <div><label>深度下界</label><input type="number" id="bDepthMin" value="0.05" step="0.05"></div>
+      </div>
+      <div class="row">
+        <div><label>倾角范围 (°)</label><input type="number" id="bDipMax" value="90" step="1"></div>
+        <div><label>长度/宽度上界 (km)</label><input type="number" id="bSizeMax" value="12" step="0.5"></div>
+      </div>
+      <div class="row">
+        <div><label>多起点数</label><input type="number" id="starts" value="24" min="4" max="80"></div>
+        <div><label>随机种子</label><input type="number" id="seed" value="20260922"></div>
+      </div>
+      <button onclick="runInversion()">运行多起点反演</button>
+    </div>
+
+    <div class="panel">
+      <h2>③ 双候选差分</h2>
+      <label>候选 A / B（按各自最优解自动填充，可手改 solutionId）</h2>
+      <div class="row">
+        <input type="number" id="cmpA" placeholder="solutionId A">
+        <input type="number" id="cmpB" placeholder="solutionId B">
+      </div>
+      <label>差分维度</label>
+      <select id="cmpMode">
+        <option value="TYPE">按观测类型（GNSS 三分量 / InSAR LOS）</option>
+        <option value="REGION">按区域（near / far）</option>
+        <option value="EPOCH">按时段</option>
+      </select>
+      <button class="sec" onclick="compare()">计算差分</button>
+      <div id="compareOut"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>观测场与预测场</h2>
+      <div id="mapBar" class="small muted"></div>
+      <div style="margin:8px 0">
+        <label style="display:inline">预测场分量</label>
+        <select id="fieldComponent" style="width:auto;display:inline-block" onchange="renderField()">
+          <option value="uz">u_z 竖直（m）</option>
+          <option value="ue">u_E 东向</option>
+          <option value="un">u_N 北向</option>
+          <option value="losA84">LOS A84 升轨</option>
+          <option value="losD35">LOS D35 降轨</option>
+        </select>
+        <span id="fieldMeta" class="small muted"></span>
+      </div>
+      <div class="twocol"><div id="map"></div><div id="field"></div></div>
+    </div>
+    <div class="panel">
+      <h2>多起点解与参数分布</h2>
+      <div id="runMeta" class="small muted"></div>
+      <div id="solutions"></div>
+    </div>
+    <div class="panel">
+      <h2>空间残差与溯源</h2>
+      <div id="resid"></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

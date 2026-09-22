@@ -34,3 +34,8 @@ coverage/
 .vite/
 .turbo/
 *.tsbuildinfo
+
+# 本地服务数据库
+data/
+*.sqlite
+*.sqlite-journal
